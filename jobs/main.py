@@ -1,5 +1,6 @@
 import os
 import random
+import time
 import uuid
 from confluent_kafka import SerializingProducer
 import simplejson as json
@@ -102,6 +103,26 @@ def generate_vehicle_data(device_id):
         'fuelType':'Hybrid'
     }
 
+def json_serializer(obj):
+    if isinstance(obj,uuid.UUID):
+        return str(obj)
+    raise TypeError(f'object of type {obj.__class__.__name__} is not Json serializable')
+
+def delivery_report(err,msg):
+    if err is not None:
+        print(f'Message delivery failed: {err}')
+    else:
+        print(f'Message delivered to {msg.topic()} [{msg.partition()}]')
+
+
+def produce_data_to_kafka(producer,topic,data):
+    producer.produce(topic,
+                     key = str(data['id']),
+                     value =json.dumps(data,default=json_serializer).encode('utf-8'),
+                     on_delivery = delivery_report
+                     )
+    producer.flush()
+
 
 def simulate_journey(producer,device_id):
     while True:
@@ -110,7 +131,19 @@ def simulate_journey(producer,device_id):
         traffic_camera_data = generate_traffic_camera_data(device_id,vehicle_data['timestamp'],'surveillance-camera4')
         weather_data = generate_weather_data(device_id,vehicle_data['timestamp'],vehicle_data['location'])
         emergency_data = generate_emergency_data(device_id,vehicle_data['timestamp'],vehicle_data['location'])
-        break
+        
+        if(vehicle_data['location'][0] >= BIRMINGHAM_COORDINATES['latitude'] and vehicle_data['location'][1] <= BIRMINGHAM_COORDINATES['longitude']):
+            print('Vehicle has reached Birmingham. Simulation is ending...')
+            break
+
+        produce_data_to_kafka(producer,VEHICLE_TOPIC,vehicle_data)
+        produce_data_to_kafka(producer,GPS_TOPIC,gps_data)
+        produce_data_to_kafka(producer,TRAFFIC_TOPIC,traffic_camera_data)
+        produce_data_to_kafka(producer,WEATHER_TOPIC,weather_data)
+        produce_data_to_kafka(producer,EMERGENCY_TOPIC,emergency_data)
+
+        time.sleep(5)
+
 
 if __name__ == "__main__":
     producer_config = {
